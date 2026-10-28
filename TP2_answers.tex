@@ -1,0 +1,195 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+
+\title{Practical Work 2 -- Image Deblurring using Gibbs Sampling\\Answers}
+\author{}
+\date{}
+
+\newcommand{\Dt}{\tilde{\mathbf D}}
+
+\begin{document}
+\maketitle
+
+\section*{Question 1}
+\begin{itemize}
+  \item $\tau_e$: noise precision (inverse of the noise variance). A large $\tau_e$ means a weakly noisy observation.
+  \item $\tau_x$: precision of the prior (regularization weight). A large $\tau_x$ enforces a strongly smooth image.
+  \item $\mathbf D$: finite-difference operator (discrete gradient). $\|\mathbf D\mathbf x\|^2$ sums the squared differences between neighbouring pixels, so the prior penalizes abrupt variations and favours smooth images.
+\end{itemize}
+
+\section*{Question 2}
+The acquired image $\mathbf y$ is blurred: edges are smeared and fine details and textures are lost compared with the true image $\mathbf x$. It is also corrupted by additive noise, which is of low level here.
+
+\section*{Question 3}
+The kernel is the point spread function (PSF): the response of the system to a point source. It is a $7\times 7$, symmetric, non-negative kernel summing to $1$, peaked at its centre. It defines $\mathbf H$: the acquired image is the convolution of the true image with it. It acts as a low-pass filter, each pixel being replaced by a weighted average of its neighbours.
+
+\section*{Question 4}
+c.f.\ code (\texttt{Fourier\_D.m}):
+\[
+\Dt = |\widehat{\mathbf D}_x|^2 + |\widehat{\mathbf D}_y|^2 .
+\]
+
+Usefulness: $\mathbf D^\top\mathbf D$ (like $\mathbf H^\top\mathbf H$) is a convolution operator, hence diagonalized by the DFT. The precision matrix of $\mathbf x \mid \tau_e,\tau_x,\mathbf y$,
+\[
+\tau_e\mathbf H^\top\mathbf H + \tau_x\mathbf D^\top\mathbf D \;\longrightarrow\; \tau_e|\widehat{\mathbf H}|^2 + \tau_x\Dt ,
+\]
+becomes an element-wise expression. Its inversion and the sampling of $\mathbf x$ then cost $\mathcal O(N\log N)$ instead of inverting an $N\times N$ matrix. It is also used to compute $\|\mathbf D\mathbf x\|^2$ in the $\tau_x$ update (Parseval).
+
+\section*{Derivation 4.1 -- Conditional distribution of $\tau_e$}
+\textbf{Goal:} keep only the terms depending on $\tau_e$ and recognize the kernel of a Gamma distribution, then identify $\alpha_e$ and $\beta_e$.
+
+\textbf{1. Posterior} (Bayes' rule):
+\[
+p(\mathbf x,\tau_e,\tau_x\mid\mathbf y) \propto
+\underbrace{p(\mathbf y\mid\mathbf x,\tau_e)}_{\text{Gaussian likelihood}}\;
+\underbrace{p(\mathbf x\mid\tau_x)}_{\text{Gaussian prior}}\;
+\underbrace{p(\tau_e)\,p(\tau_x)}_{\text{Gamma priors}} .
+\]
+
+\textbf{2. Conditional:} $p(\tau_e\mid\mathbf x,\tau_x,\mathbf y)\propto p(\mathbf x,\tau_e,\tau_x\mid\mathbf y)$. The factors $p(\mathbf x\mid\tau_x)$ and $p(\tau_x)$ do not depend on $\tau_e$, so
+\[
+p(\tau_e\mid\mathbf x,\mathbf y) \propto p(\mathbf y\mid\mathbf x,\tau_e)\,p(\tau_e).
+\]
+
+\textbf{3. Likelihood:} $\mathbf y\mid\mathbf x,\tau_e\sim\mathcal N(\mathbf H\mathbf x,\tau_e^{-1}\mathbf I_N)$, hence
+\[
+p(\mathbf y\mid\mathbf x,\tau_e) = \left(\frac{\tau_e}{2\pi}\right)^{N/2}\exp\!\left(-\frac{\tau_e}{2}\|\mathbf y-\mathbf H\mathbf x\|^2\right)
+\propto \tau_e^{N/2}\exp\!\left(-\frac{\tau_e}{2}\|\mathbf y-\mathbf H\mathbf x\|^2\right).
+\]
+
+\textbf{4. Prior} (shape--rate): $\tau_e\sim\Gamma(\alpha_{e0},\beta_{e0})$, i.e.\ $p(\tau_e)\propto\tau_e^{\alpha_{e0}-1}\exp(-\beta_{e0}\tau_e)$.
+
+\textbf{5. Product:}
+\[
+p(\tau_e\mid\mathbf x,\mathbf y) \propto
+\tau_e^{\,\alpha_{e0}+\frac N2-1}\exp\!\left[-\tau_e\left(\beta_{e0}+\frac12\|\mathbf y-\mathbf H\mathbf x\|^2\right)\right].
+\]
+
+\textbf{6. Identification:} this is the kernel of $\Gamma(\alpha,\beta)\propto\tau^{\alpha-1}e^{-\beta\tau}$, hence
+\[
+\boxed{\;p(\tau_e\mid\mathbf x,\mathbf y)=\Gamma(\tau_e;\alpha_e,\beta_e),\qquad
+\alpha_e=\alpha_{e0}+\frac N2,\qquad
+\beta_e=\beta_{e0}+\frac12\|\mathbf y-\mathbf H\mathbf x\|^2\;}
+\]
+
+\textbf{Remark (implementation):} with the unnormalized DFT (\texttt{fft2}), Parseval gives
+$\|\mathbf y-\mathbf H\mathbf x\|^2=\frac1N\sum|\widehat{\mathbf y}-\widehat{\mathbf H}\odot\widehat{\mathbf x}|^2$.
+
+\section*{Question 5}
+c.f.\ code (\texttt{main.m}, block (a)):
+\begin{verbatim}
+alpha_e = alpha_e0 + Npix/2;
+res2    = sum(sum(abs(y_hat - Hhat .* x_hat).^2)) / Npix;  % ||y-Hx||^2
+beta_e  = beta_e0 + res2/2;
+tau_e   = rndgamma_shape_rate(alpha_e, beta_e);
+\end{verbatim}
+
+\section*{Derivation 4.2 -- Conditional distribution of $\tau_x$}
+\textbf{1. Conditional:} the likelihood $p(\mathbf y\mid\mathbf x,\tau_e)$ and $p(\tau_e)$ do not depend on $\tau_x$, so
+\[
+p(\tau_x\mid\mathbf x,\mathbf y) \propto p(\mathbf x\mid\tau_x)\,p(\tau_x).
+\]
+
+\textbf{2. Prior on $\mathbf x$:} Gaussian with precision matrix $\tau_x\mathbf D^\top\mathbf D$. Its normalization constant depends on $\tau_x$ and must be kept:
+\[
+p(\mathbf x\mid\tau_x) \propto \tau_x^{N/2}\exp\!\left(-\frac{\tau_x}{2}\|\mathbf D\mathbf x\|^2\right).
+\]
+
+\textbf{3. Hyperprior:} $p(\tau_x)\propto\tau_x^{\alpha_{x0}-1}\exp(-\beta_{x0}\tau_x)$.
+
+\textbf{4. Product:}
+\[
+p(\tau_x\mid\mathbf x,\mathbf y) \propto
+\tau_x^{\,\alpha_{x0}+\frac N2-1}\exp\!\left[-\tau_x\left(\beta_{x0}+\frac12\|\mathbf D\mathbf x\|^2\right)\right],
+\]
+which is the kernel of a Gamma distribution: $\tau_x\mid\mathbf x,\mathbf y\sim\Gamma(\alpha_x,\beta_x)$.
+
+\section*{Question 6}
+Identifying the exponent $\alpha_x-1=\alpha_{x0}+\frac N2-1$ and the rate:
+\[
+\boxed{\;\alpha_x=\alpha_{x0}+\frac N2,\qquad \beta_x=\beta_{x0}+\frac12\|\mathbf D\mathbf x\|^2\;}
+\]
+In the Fourier domain (Parseval): $\|\mathbf D\mathbf x\|^2=\frac1N\sum\Dt\odot|\widehat{\mathbf x}|^2$.
+
+c.f.\ code (\texttt{main.m}, block (b)):
+\begin{verbatim}
+xnormD2 = sum(sum(D .* abs(x_hat).^2)) / Npix;  % ||Dx||^2
+alpha_x = alpha_x0 + Npix/2;
+beta_x  = beta_x0 + xnormD2/2;
+tau_x   = rndgamma_shape_rate(alpha_x, beta_x);
+\end{verbatim}
+
+\section*{Question 8}
+With periodic boundary conditions, $\mathbf H^\top\mathbf H$ and $\mathbf D^\top\mathbf D$ are circulant (convolutions), hence diagonalized by the DFT. The posterior precision $\tau_e\mathbf H^\top\mathbf H+\tau_x\mathbf D^\top\mathbf D$ becomes the diagonal $\tau_e|\widehat{\mathbf H}|^2+\tau_x\Dt$:
+\begin{itemize}
+  \item inversion and sampling are element-wise, in $\mathcal O(N)$, plus FFTs in $\mathcal O(N\log N)$;
+  \item in the spatial domain, they would require inverting or factorizing (Cholesky) an $N\times N$ matrix, in $\mathcal O(N^3)$. Here $N=256^2=65\,536$, i.e.\ about $4.3\cdot10^9$ entries ($\approx 34$\,GB in double precision).
+\end{itemize}
+
+\section*{Question 9}
+c.f.\ code (\texttt{main.m}, block (c)):
+\begin{verbatim}
+num   = tau_e * conj(Hhat) .* y_hat;
+denom = tau_e * abs(Hhat).^2 + tau_x * D;
+muhat = num ./ denom;
+\end{verbatim}
+$\widehat{\mathbf H}^*$ is the Fourier counterpart of $\mathbf H^\top$. Here the PSF is symmetric, so $\widehat{\mathbf H}$ is real and $\widehat{\mathbf H}^*=\widehat{\mathbf H}$. At frequency $0$, $\widehat{\mathbf H}=1$ and $\Dt=0$, so $\text{denom}=\tau_e>0$: there is no division by zero.
+
+\section*{Question 10}
+c.f.\ code (\texttt{main.m}, block (c)):
+\begin{verbatim}
+U = fft2(randn(M,N))/sqrt(Npix);
+x_hat_s = muhat + sqrt(Npix) * U ./ sqrt(denom);
+x = real(ifft2(x_hat_s));
+\end{verbatim}
+With $\mathbf W=\mathbf F/\sqrt N$ the unitary DFT and $\mathbf z\sim\mathcal N(\mathbf 0,\mathbf I)$, $\mathbf x=\boldsymbol\mu+\mathbf W^H\widehat{\boldsymbol\Sigma}^{-1/2}\mathbf W\mathbf z$ has covariance $\mathbf W^H\widehat{\boldsymbol\Sigma}^{-1}\mathbf W=(\tau_e\mathbf H^\top\mathbf H+\tau_x\mathbf D^\top\mathbf D)^{-1}$. With the unnormalized \texttt{fft2}, this gives $\widehat{\mathbf x}=\widehat{\boldsymbol\mu}+\mathbf F\mathbf z\oslash\sqrt{\widehat{\boldsymbol\Sigma}}=\widehat{\boldsymbol\mu}+\sqrt N\,\mathbf U\oslash\sqrt{\widehat{\boldsymbol\Sigma}}$, hence the $\sqrt N$ factor. This was checked by Monte-Carlo on the variance of one pixel. The sample is not named \texttt{X}, because \texttt{X} already holds the true image used for the PSNR.
+
+\section*{Question 12}
+The Burnin Method is used to discard the initial samples of the Markov chain, which may not represent the target distribution well.
+However, on this image at 1k iterations keeping the first iterations does not change the results significantly. 28.63 db (with burnin) vs 28.62 db (without burnin).
+
+
+\section*{Question 13}
+Around 10 iterations are enough to reach a stable PSNR.
+\begin{figure}[h!]
+\centering
+\includegraphics[width=\linewidth]{chains.png}
+\caption{Evolution of $\tau_e$, $\tau_x$ and $\sigma_e=1/\sqrt{\tau_e}$ over the iterations (red dashed line: burn-in).}
+\label{fig:chains}
+\end{figure}
+
+\section*{Question 14}
+c.f code (\texttt{main.m}, block (d)):
+If the iteration number is after the burn in AND if the index of the iteration is a multiple of the thinning factor (even because thin ==2), then the sample is kept. Otherwise it is discarded.
+
+
+The condition \texttt{if it > BurnIn \&\& mod(it - BurnIn, Thin) == 0} allows selecting and storing the image samples only after the burn-in period, while applying a thinning step to limit their statistical correlation. Then, the code block computes the posterior mean estimator $\hat{x}$ (represented as \texttt{Xbar}) by calculating the empirical mean of all the preserved samples:   
+\[
+\hat{x} = \frac{1}{K} \sum_{k=1}^{K} x^{(k)}
+\]
+
+
+\section*{Question 15}
+
+The reconstruccted image is granier than the original image. The grayscale is smoother. The black is lighter ans White is darker. 
+
+\section*{Question 16}
+
+It adapt with the input image. It automaticately converge to the best solution.
+If we choose it manually we have to try different values and see which one is the best. It is not automatic and it is not optimal.
+
+\section*{Question 17}
+
+\begin{itemize}
+  \item \textbf{Deconvolution}. We reverse the effect of the blurring convolution.
+  \item \textbf{Bayesian}. x, $\tau_e$ and $\tau_x$ are random variables with prior laws. We compute this law and we sample it with Gibbs.
+  \item \textbf{Unsupervised}. The hyperparameters $\tau_e$ and $\tau_x$ are estimated from the data, instead of being fixed manually.
+\end{itemize}
+\end{document}
